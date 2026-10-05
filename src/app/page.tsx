@@ -1,69 +1,132 @@
-import Image from "next/image";
+import { sql } from '@/lib/db';
+import { getCurrentUser } from '@/lib/auth';
+import { redirect } from 'next/navigation';
+import { CandidateTable } from '@/components/CandidateTable';
+import { IntakeModal } from '@/components/IntakeModal';
+import { KekaShell } from '@/components/KekaShell';
+import { Users, ShieldAlert, CheckCircle, BarChart3 } from 'lucide-react';
 
-export default function Home() {
+export const dynamic = 'force-dynamic';
+
+export default async function DashboardPage() {
+  const user = await getCurrentUser();
+  if (!user) {
+    redirect('/login');
+  }
+
+  const roles = await sql`SELECT * FROM roles ORDER BY created_at DESC LIMIT 1`;
+  const activeRole = roles[0];
+
+  let candidates: any[] = [];
+  if (activeRole) {
+    candidates = await sql`
+      SELECT 
+        c.id,
+        c.name,
+        c.email,
+        c.raw_resume,
+        c.created_at,
+        coalesce(
+          json_agg(
+            json_build_object(
+              'fit_score', s.fit_score,
+              'fit_summary', s.fit_summary,
+              'has_integrity_flags', s.has_integrity_flags,
+              'integrity_flags', s.integrity_flags
+            )
+          ) filter (where s.id is not null), '[]'
+        ) as screenings
+      FROM candidates c
+      LEFT JOIN screenings s ON s.candidate_id = c.id
+      WHERE c.role_id = ${activeRole.id}
+      GROUP BY c.id
+      ORDER BY coalesce(max(s.fit_score), 0) DESC, c.created_at DESC
+    `;
+  }
+
+
+  candidates.forEach((c) => {
+    if (c.screenings?.[0]?.integrity_flags) {
+      c.screenings[0].integrity_flags = JSON.parse(c.screenings[0].integrity_flags);
+    }
+  });
+  // Metrics computation for Keka-style overview cards
+  const totalCount = candidates.length;
+  const flaggedCount = candidates.filter((c) => c.screenings?.[0]?.has_integrity_flags).length;
+  const highFitCount = candidates.filter((c) => (c.screenings?.[0]?.fit_score || 0) >= 75).length;
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
+    <KekaShell
+      userEmail={user.email}
+      activeRoleTitle={activeRole?.title || 'General Requisition'}
+    >
+      {/* Title & Action Strip */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight text-slate-900">
+            {activeRole ? activeRole.title : 'Senior Full Stack Engineer'}
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-normal">
+            {activeRole?.description || 'Active role pipeline with automated adversarial filtering.'}
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        {activeRole && <IntakeModal roleId={activeRole.id} />}
+      </div>
+
+      {/* Metrics Row (Keka Stat Tiles) */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
+          <div>
+            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+              Total Applicants
+            </div>
+            <div className="text-2xl font-bold text-slate-900 mt-1">{totalCount}</div>
+          </div>
+          <div className="h-10 w-10 rounded-lg bg-slate-100 flex items-center justify-center text-slate-600">
+            <Users className="h-5 w-5" />
+          </div>
         </div>
-      </main>
-    </div>
+
+        <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
+          <div>
+            <div className="text-[11px] font-semibold text-rose-600 uppercase tracking-wider">
+              Integrity Anomaly Flags
+            </div>
+            <div className="text-2xl font-bold text-rose-700 mt-1">{flaggedCount}</div>
+          </div>
+          <div className="h-10 w-10 rounded-lg bg-rose-50 flex items-center justify-center text-rose-600 border border-rose-100">
+            <ShieldAlert className="h-5 w-5" />
+          </div>
+        </div>
+
+        <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between">
+          <div>
+            <div className="text-[11px] font-semibold text-emerald-600 uppercase tracking-wider">
+              High Fit Matches (≥75)
+            </div>
+            <div className="text-2xl font-bold text-emerald-700 mt-1">{highFitCount}</div>
+          </div>
+          <div className="h-10 w-10 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600 border border-emerald-100">
+            <CheckCircle className="h-5 w-5" />
+          </div>
+        </div>
+      </div>
+
+      {/* Candidate Table */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-600">
+            Ranked Candidate Pipeline
+          </h2>
+          <span className="text-[11px] text-slate-400">
+            Ranked by Fit Score • Audited by Integrity Layer
+          </span>
+        </div>
+
+        <CandidateTable candidates={candidates} />
+      </div>
+    </KekaShell>
   );
+  
 }
