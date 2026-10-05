@@ -87,7 +87,7 @@ export function CandidateTable({ candidates }: { candidates: CandidateRow[] }) {
                     <TableCell>
                       {hasFlags ? (
                         <div className="flex flex-wrap gap-1.5 items-center">
-                          {flags.map((f, idx) => (
+                          {flags.map((f:any, idx:any) => (
                             <Badge
                               key={idx}
                               variant="outline"
